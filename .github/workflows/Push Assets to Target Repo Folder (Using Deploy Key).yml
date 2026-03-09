@@ -1,0 +1,96 @@
+name: Push Assets to Target Repo Folder (Using Deploy Key)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'index.html'
+      - 'css/**'
+      - 'images/**'
+      - 'js/**'
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  push-assets-to-folder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Configure Git User
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+
+      - name: Clone target repository
+        env:
+          TARGET_REPO_SSH: "git@github.com:Eclair-Official/nav.git"
+          TARGET_BRANCH: "gh-pages"
+        run: |
+          git clone --depth 1 --branch ${TARGET_BRANCH} ${TARGET_REPO_SSH} target-repo
+
+      - name: Prepare folder and copy assets
+        env:
+          SOURCE_REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          # 创建目标文件夹
+          mkdir -p ./target-repo/pages/${SOURCE_REPO_NAME}
+          
+          # 复制 index.html
+          cp ./index.html ./target-repo/pages/${SOURCE_REPO_NAME}/
+          
+          # 复制 css 文件夹（如果存在）
+          if [ -d "./css" ]; then
+            mkdir -p ./target-repo/pages/${SOURCE_REPO_NAME}/css
+            cp -r ./css/* ./target-repo/pages/${SOURCE_REPO_NAME}/css/
+          fi
+          
+          # 复制 images 文件夹（如果存在）
+          if [ -d "./images" ]; then
+            mkdir -p ./target-repo/pages/${SOURCE_REPO_NAME}/images
+            cp -r ./images/* ./target-repo/pages/${SOURCE_REPO_NAME}/images/
+          fi
+          
+          # 复制 js 文件夹（如果存在）
+          if [ -d "./js" ]; then
+            mkdir -p ./target-repo/pages/${SOURCE_REPO_NAME}/js
+            cp -r ./js/* ./target-repo/pages/${SOURCE_REPO_NAME}/js/
+          fi
+
+      - name: Sync changes and push to target repository
+        env:
+          TARGET_BRANCH: "gh-pages"
+          SOURCE_REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          cd target-repo
+          
+          # 检查是否有文件变更
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "ℹ️ Changes detected, preparing to push."
+            
+            # 添加并提交变更
+            git add .
+            git commit -m "Sync ${SOURCE_REPO_NAME} assets (index.html, css, images, js) from source repo @ ${{ github.sha }}"
+            
+            # 拉取远程分支的最新代码并与本地合并（rebase）
+            git pull origin ${TARGET_BRANCH} --rebase
+            
+            # 推送合并后的代码
+            git push origin ${TARGET_BRANCH}
+            
+            echo "✅ Successfully pushed ${SOURCE_REPO_NAME} assets to the ${TARGET_BRANCH} branch."
+          else
+            echo "ℹ️ No changes to commit. Skipping push."
+          fi
